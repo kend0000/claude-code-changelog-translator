@@ -197,7 +197,7 @@ class ChangelogTranslator:
         
         message = self.anthropic.messages.create(
             model="claude-sonnet-4-20250514",
-            max_tokens=16000,
+            max_tokens=100000,
             temperature=0.3,
             system=self.translation_system_prompt,
             messages=[{

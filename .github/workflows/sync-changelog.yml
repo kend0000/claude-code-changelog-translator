@@ -1,0 +1,39 @@
+name: Sync Claude Code Changelog
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # 6時間ごとに実行
+  workflow_dispatch:  # 手動実行も可能
+
+jobs:
+  check-and-translate:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+        
+      - name: Python環境をセットアップ
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: 依存パッケージをインストール
+        run: |
+          pip install anthropic requests
+          
+      - name: チェンジログをチェックして翻訳
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python translate.py
+        
+      - name: 変更をコミット
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add -A
+          git diff --quiet && git diff --staged --quiet || git commit -m "翻訳を更新 [$(date +'%Y-%m-%d %H:%M')]"
+          
+      - name: GitHubにプッシュ
+        run: git push

@@ -2,9 +2,14 @@ import os
 import hashlib
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from anthropic import Anthropic
 from typing import Optional, Tuple, Dict
+
+def get_jst_now():
+    """日本時間（JST）で現在時刻を取得"""
+    jst = timezone(timedelta(hours=9))
+    return datetime.now(jst)
 
 class ChangelogTranslator:
     def __init__(self):
@@ -279,7 +284,7 @@ class ChangelogTranslator:
         
         header = f"""# Claude Code チェンジログ（日本語訳）
 
-> 最終更新: {datetime.now().strftime('%Y年%m月%d日 %H:%M')}  
+> 最終更新: {get_jst_now().strftime('%Y年%m月%d日 %H:%M')}（日本時間）  
 > 原文: {self.changelog_url}  
 > 表示: 最新{self.max_versions_to_translate}バージョン
 
@@ -305,7 +310,7 @@ class ChangelogTranslator:
             
             updated_header = f"""# Claude Code チェンジログ（日本語訳）
 
-> 最終更新: {datetime.now().strftime('%Y年%m月%d日 %H:%M')}  
+> 最終更新: {get_jst_now().strftime('%Y年%m月%d日 %H:%M')}（日本時間）  
 > 原文: {self.changelog_url}  
 > 表示: 最新{self.max_versions_to_translate}バージョン
 
@@ -352,7 +357,7 @@ class ChangelogTranslator:
         
         fields.append({
             "name": "更新日時",
-            "value": datetime.now().strftime('%Y年%m月%d日 %H:%M'),
+            "value": get_jst_now().strftime('%Y年%m月%d日 %H:%M') + "（日本時間）",
             "inline": False
         })
         
@@ -379,7 +384,7 @@ class ChangelogTranslator:
         print("=" * 70)
         print("Claude Code Changelog Translator (最適化版)")
         print("=" * 70)
-        print(f"実行時刻: {datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')}")
+        print(f"実行時刻: {get_jst_now().strftime('%Y年%m月%d日 %H:%M:%S')}（日本時間）")
         print()
         
         try:

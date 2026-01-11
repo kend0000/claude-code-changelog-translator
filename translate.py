@@ -22,7 +22,7 @@ class ChangelogTranslator:
         self.translation_count_file = "translation_count.txt"
         
         # 設定
-        self.full_translation_interval = 10  # 10回に1回全文翻訳
+        self.full_translation_interval = 30  # 30回に1回全文翻訳
         
         # 翻訳エージェントのシステムプロンプト
         self.translation_system_prompt = """あなたはプロフェッショナルな英日翻訳者です。以下の原則に従って翻訳を行ってください。

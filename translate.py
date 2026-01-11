@@ -193,15 +193,15 @@ class ChangelogTranslator:
 {content}"""
         
         print("🤖 Claude APIで翻訳中（ストリーミング）...")
-        print(f"   モデル: claude-sonnet-4-20250514")
+        print(f"   モデル: claude-sonnet-4-5-20250929")
         print(f"   モード: {'差分翻訳' if is_incremental else '全文翻訳'}")
         
         # ストリーミングAPIを使用
         translated_text = ""
         
         with self.anthropic.messages.stream(
-            model="claude-sonnet-4-20250514",
-            max_tokens=64000,
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=100000,
             temperature=0.3,
             system=self.translation_system_prompt,
             messages=[{

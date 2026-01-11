@@ -22,7 +22,7 @@ class ChangelogTranslator:
         self.translation_count_file = "translation_count.txt"
         
         # 設定
-        self.full_translation_interval = 30  # 30回に1回全文翻訳
+        self.full_translation_interval = 10  # 10回に1回全文翻訳
         
         # 翻訳エージェントのシステムプロンプト
         self.translation_system_prompt = """あなたはプロフェッショナルな英日翻訳者です。以下の原則に従って翻訳を行ってください。
@@ -160,6 +160,7 @@ class ChangelogTranslator:
     def translate_changelog(self, content: str, is_incremental: bool = False) -> str:
         """
         Claudeで翻訳（翻訳エージェントのプロンプトを使用）
+        ストリーミングAPIを使用して長時間処理に対応
         
         Args:
             content: 翻訳する内容
@@ -191,22 +192,31 @@ class ChangelogTranslator:
 
 {content}"""
         
-        print("🤖 Claude APIで翻訳中...")
+        print("🤖 Claude APIで翻訳中（ストリーミング）...")
         print(f"   モデル: claude-sonnet-4-20250514")
         print(f"   モード: {'差分翻訳' if is_incremental else '全文翻訳'}")
         
-        message = self.anthropic.messages.create(
+        # ストリーミングAPIを使用
+        translated_text = ""
+        
+        with self.anthropic.messages.stream(
             model="claude-sonnet-4-20250514",
-            max_tokens=100000,
+            max_tokens=64000,
             temperature=0.3,
             system=self.translation_system_prompt,
             messages=[{
                 "role": "user",
                 "content": user_message
             }]
-        )
+        ) as stream:
+            for text in stream.text_stream:
+                translated_text += text
+                # 進捗表示（1000文字ごと）
+                if len(translated_text) % 1000 < 10:
+                    print(".", end="", flush=True)
         
-        return message.content[0].text
+        print()  # 改行
+        return translated_text
     
     def save_translation(self, content: str, is_full: bool = True):
         """翻訳結果を保存"""

@@ -3,7 +3,7 @@ import hashlib
 import requests
 from datetime import datetime
 from anthropic import Anthropic
-from typing import Optional
+from typing import Optional, Tuple, Dict
 
 class ChangelogTranslator:
     def __init__(self):
@@ -22,7 +22,7 @@ class ChangelogTranslator:
         self.translation_count_file = "translation_count.txt"
         
         # 設定
-        self.full_translation_interval = 30  # 10回に1回全文翻訳
+        self.full_translation_interval = 10  # 10回に1回全文翻訳
         
         # 翻訳エージェントのシステムプロンプト
         self.translation_system_prompt = """あなたはプロフェッショナルな英日翻訳者です。以下の原則に従って翻訳を行ってください。
@@ -105,14 +105,10 @@ class ChangelogTranslator:
             f.write(content)
     
     def extract_new_entries(self, old_content: str, new_content: str) -> Optional[str]:
-        """
-        チェンジログから新規追加部分のみを抽出
-        チェンジログは上部に新しいエントリーが追加される形式
-        """
+        """チェンジログから新規追加部分のみを抽出"""
         old_lines = old_content.splitlines()
         new_lines = new_content.splitlines()
         
-        # 新規追加行数を計算
         diff_count = len(new_lines) - len(old_lines)
         
         if diff_count <= 0:
@@ -120,15 +116,12 @@ class ChangelogTranslator:
         
         print(f"🔍 {diff_count}行の新規追加を検出")
         
-        # 上部の新規追加部分を取得（安全マージン+50行）
-        # ヘッダー（# Changelog）があるかチェック
         header_lines = 0
         for i, line in enumerate(new_lines[:10]):
             if line.strip().startswith('# '):
                 header_lines = i + 1
                 break
         
-        # ヘッダーの後から差分+マージンまでを取得
         start_index = header_lines
         end_index = min(diff_count + header_lines + 50, len(new_lines))
         
@@ -150,22 +143,14 @@ class ChangelogTranslator:
             f.write(str(count))
         
         if count >= self.full_translation_interval:
-            # カウンターリセット
             with open(self.translation_count_file, 'w') as f:
                 f.write('0')
             return True
         
         return False
     
-    def translate_changelog(self, content: str, is_incremental: bool = False) -> str:
-        """
-        Claudeで翻訳（翻訳エージェントのプロンプトを使用）
-        ストリーミングAPIを使用して長時間処理に対応
-        
-        Args:
-            content: 翻訳する内容
-            is_incremental: 差分翻訳かどうか
-        """
+    def translate_changelog(self, content: str, is_incremental: bool = False) -> Tuple[str, Dict]:
+        """Claudeで翻訳（トークン数とコストを返す）"""
         if is_incremental:
             user_message = f"""以下はClaude Codeチェンジログの最新更新部分です。
 これを既存の翻訳に追加できる形で日本語に翻訳してください。
@@ -193,10 +178,9 @@ class ChangelogTranslator:
 {content}"""
         
         print("🤖 Claude APIで翻訳中（ストリーミング）...")
-        print(f"   モデル: claude-sonnet-4-5-20250929")
+        print(f"   モデル: claude-sonnet-4-5-20250929 (Sonnet 4.5)")
         print(f"   モード: {'差分翻訳' if is_incremental else '全文翻訳'}")
         
-        # ストリーミングAPIを使用
         translated_text = ""
         
         with self.anthropic.messages.stream(
@@ -211,18 +195,42 @@ class ChangelogTranslator:
         ) as stream:
             for text in stream.text_stream:
                 translated_text += text
-                # 進捗表示（1000文字ごと）
                 if len(translated_text) % 1000 < 10:
                     print(".", end="", flush=True)
         
-        print()  # 改行
-        return translated_text
+        print()
+        
+        # 使用量情報を取得
+        final_message = stream.get_final_message()
+        usage = {
+            'input_tokens': final_message.usage.input_tokens,
+            'output_tokens': final_message.usage.output_tokens
+        }
+        
+        # コスト計算
+        input_cost = (usage['input_tokens'] / 1_000_000) * 3
+        output_cost = (usage['output_tokens'] / 1_000_000) * 15
+        total_cost = input_cost + output_cost
+        
+        print()
+        print(f"📊 トークン使用量:")
+        print(f"   入力: {usage['input_tokens']:,} トークン")
+        print(f"   出力: {usage['output_tokens']:,} トークン")
+        print(f"   合計: {usage['input_tokens'] + usage['output_tokens']:,} トークン")
+        print()
+        print(f"💰 コスト詳細:")
+        print(f"   入力: ${input_cost:.4f}")
+        print(f"   出力: ${output_cost:.4f}")
+        print(f"   合計: ${total_cost:.4f}（約{int(total_cost * 145)}円）")
+        
+        usage['total_cost'] = total_cost
+        
+        return translated_text, usage
     
     def save_translation(self, content: str, is_full: bool = True):
         """翻訳結果を保存"""
         os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
         
-        # ヘッダーを追加
         header = f"""# Claude Code チェンジログ（日本語訳）
 
 > 最終更新: {datetime.now().strftime('%Y年%m月%d日 %H:%M')}  
@@ -234,7 +242,6 @@ class ChangelogTranslator:
         with open(self.output_file, 'w', encoding='utf-8') as f:
             f.write(header + content)
         
-        # note.com用のファイルも作成（ヘッダーなし）
         with open(self.note_ready_file, 'w', encoding='utf-8') as f:
             f.write(content)
     
@@ -244,15 +251,12 @@ class ChangelogTranslator:
             with open(self.output_file, 'r', encoding='utf-8') as f:
                 existing = f.read()
             
-            # ヘッダー部分を抽出
             header_end = existing.find('---\n\n') + 5
             header = existing[:header_end]
             old_translation = existing[header_end:]
             
-            # 新規翻訳を追加
             updated_translation = new_content + "\n\n" + old_translation
             
-            # 更新日時を更新
             updated_header = f"""# Claude Code チェンジログ（日本語訳）
 
 > 最終更新: {datetime.now().strftime('%Y年%m月%d日 %H:%M')}  
@@ -262,23 +266,48 @@ class ChangelogTranslator:
 
 """
             
-            # 保存
             with open(self.output_file, 'w', encoding='utf-8') as f:
                 f.write(updated_header + updated_translation)
             
-            # note.com用
             with open(self.note_ready_file, 'w', encoding='utf-8') as f:
                 f.write(updated_translation)
                 
         except FileNotFoundError:
-            # 既存ファイルがない場合は新規作成
             self.save_translation(new_content)
     
-    def send_notification(self, message: str, estimated_cost: float = 0):
+    def send_notification(self, message: str, usage: Dict = None):
         """Discord/Slackに通知を送信"""
         if not self.discord_webhook:
             print("⚠️  通知URLが設定されていません")
             return
+        
+        fields = [
+            {
+                "name": "保存場所",
+                "value": f"`{self.output_file}`\n`{self.note_ready_file}` (note.com用)",
+                "inline": False
+            }
+        ]
+        
+        if usage:
+            fields.extend([
+                {
+                    "name": "トークン使用量",
+                    "value": f"入力: {usage.get('input_tokens', 0):,}\n出力: {usage.get('output_tokens', 0):,}",
+                    "inline": True
+                },
+                {
+                    "name": "コスト",
+                    "value": f"${usage.get('total_cost', 0):.4f}（約{int(usage.get('total_cost', 0) * 145)}円）",
+                    "inline": True
+                }
+            ])
+        
+        fields.append({
+            "name": "更新日時",
+            "value": datetime.now().strftime('%Y年%m月%d日 %H:%M'),
+            "inline": False
+        })
         
         payload = {
             "content": message,
@@ -287,28 +316,7 @@ class ChangelogTranslator:
                 "title": "📝 Claude Code チェンジログ更新",
                 "description": "翻訳が完了しました",
                 "color": 5814783,
-                "fields": [
-                    {
-                        "name": "保存場所",
-                        "value": f"`{self.output_file}`\n`{self.note_ready_file}` (note.com用)",
-                        "inline": False
-                    },
-                    {
-                        "name": "推定コスト",
-                        "value": f"${estimated_cost:.3f}（約{int(estimated_cost * 145)}円）",
-                        "inline": True
-                    },
-                    {
-                        "name": "更新日時",
-                        "value": datetime.now().strftime('%Y年%m月%d日 %H:%M'),
-                        "inline": True
-                    },
-                    {
-                        "name": "次のステップ",
-                        "value": "1. GitHubで翻訳内容を確認\n2. `note_ready.md`をnote.comにコピー&ペースト\n3. 記事を公開",
-                        "inline": False
-                    }
-                ]
+                "fields": fields
             }]
         }
         
@@ -328,16 +336,13 @@ class ChangelogTranslator:
         print()
         
         try:
-            # チェンジログを取得
             current_content = self.fetch_changelog()
             current_hash = self.calculate_hash(current_content)
             
-            # ファイルサイズ情報
             file_size_kb = len(current_content.encode('utf-8')) / 1024
             print(f"📄 ファイルサイズ: {file_size_kb:.1f}KB")
             print()
             
-            # 前回の内容を取得
             last_hash = self.get_last_hash()
             
             if current_hash == last_hash:
@@ -348,34 +353,26 @@ class ChangelogTranslator:
             print("🔍 変更を検知しました！")
             print()
             
-            # 前回のコンテンツを取得（差分計算用）
             old_content = self.get_previous_content()
+            usage = None
             
-            estimated_cost = 0.0
-            
-            # 全文翻訳か差分翻訳かを判断
             if old_content and not self.should_do_full_translation():
                 print("📝 差分翻訳モード（コスト節約）")
                 new_entries = self.extract_new_entries(old_content, current_content)
                 
                 if new_entries:
-                    translated_new = self.translate_changelog(new_entries, is_incremental=True)
-                    # 既存の翻訳に新規部分を追加
+                    translated_new, usage = self.translate_changelog(new_entries, is_incremental=True)
                     self.append_translation(translated_new)
-                    estimated_cost = 0.04  # 差分翻訳の推定コスト
                 else:
                     print("⚠️  差分抽出失敗 - 全文翻訳にフォールバック")
-                    translated = self.translate_changelog(current_content)
+                    translated, usage = self.translate_changelog(current_content)
                     self.save_translation(translated)
-                    estimated_cost = 0.52  # 全文翻訳の推定コスト（67KB）
             else:
                 reason = "初回" if not old_content else "定期メンテナンス"
                 print(f"📝 全文翻訳モード（{reason}）")
-                translated = self.translate_changelog(current_content)
+                translated, usage = self.translate_changelog(current_content)
                 self.save_translation(translated)
-                estimated_cost = 0.52
             
-            # 原文を保存（次回の差分計算用）
             self.save_previous_content(current_content)
             self.save_hash(current_hash)
             
@@ -384,15 +381,9 @@ class ChangelogTranslator:
             print(f"   - {self.output_file}")
             print(f"   - {self.note_ready_file} (note.com用)")
             print()
-            print(f"💰 推定コスト: ${estimated_cost:.3f}（約{int(estimated_cost * 145)}円）")
-            print()
             
-            # 通知送信
             print("📢 通知を送信中...")
-            self.send_notification(
-                f"翻訳完了！推定コスト: ${estimated_cost:.3f}",
-                estimated_cost
-            )
+            self.send_notification("翻訳完了！", usage)
             
             print("=" * 70)
             print("✅ 処理が正常に完了しました")

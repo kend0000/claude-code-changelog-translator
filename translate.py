@@ -1,6 +1,7 @@
 import os
 import hashlib
 import requests
+import time
 from datetime import datetime
 from anthropic import Anthropic
 from typing import Optional, Tuple, Dict
@@ -18,11 +19,12 @@ class ChangelogTranslator:
         self.last_update_file = "last_update.txt"
         self.previous_content_file = "previous_content.md"
         self.output_file = "translated/changelog_ja.md"
-        self.note_ready_file = "translated/note_ready.md"  # note.com用
+        self.note_ready_file = "translated/note_ready.md"
         self.translation_count_file = "translation_count.txt"
         
         # 設定
-        self.full_translation_interval = 10  # 10回に1回全文翻訳
+        self.full_translation_interval = 10
+        self.max_versions_to_translate = 50  # 最新50バージョンのみ翻訳
         
         # 翻訳エージェントのシステムプロンプト
         self.translation_system_prompt = """あなたはプロフェッショナルな英日翻訳者です。以下の原則に従って翻訳を行ってください。
@@ -73,6 +75,31 @@ class ChangelogTranslator:
         response = requests.get(self.changelog_url)
         response.raise_for_status()
         return response.text
+    
+    def extract_recent_versions(self, content: str, max_versions: int = None) -> str:
+        """チェンジログから最新N個のバージョンのみを抽出"""
+        if max_versions is None:
+            max_versions = self.max_versions_to_translate
+        
+        lines = content.splitlines()
+        output_lines = []
+        versions_found = 0
+        
+        for line in lines:
+            output_lines.append(line)
+            
+            # バージョン番号を検出（## で始まる行）
+            if line.strip().startswith('## ') and not line.strip().startswith('## Changelog'):
+                versions_found += 1
+                
+                if versions_found >= max_versions:
+                    output_lines.append("\n---")
+                    output_lines.append(f"\n*最新{max_versions}バージョンのみ表示*")
+                    break
+        
+        result = "\n".join(output_lines)
+        print(f"📌 最新{versions_found}バージョンを抽出（{len(result)} 文字）")
+        return result
     
     def get_last_hash(self) -> Optional[str]:
         """前回のハッシュ値を取得"""
@@ -149,8 +176,26 @@ class ChangelogTranslator:
         
         return False
     
-    def translate_changelog(self, content: str, is_incremental: bool = False) -> Tuple[str, Dict]:
-        """Claudeで翻訳（トークン数とコストを返す）"""
+    def translate_changelog(self, content: str, is_incremental: bool = False, max_retries: int = 3) -> Tuple[str, Dict]:
+        """Claudeで翻訳（リトライ機能付き）"""
+        
+        for attempt in range(max_retries):
+            try:
+                return self._translate_with_stream(content, is_incremental)
+            except Exception as e:
+                error_msg = str(e)
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 10
+                    print(f"\n⚠️  エラー発生（試行 {attempt + 1}/{max_retries}）")
+                    print(f"   {error_msg[:150]}")
+                    print(f"⏳ {wait_time}秒後に再試行します...\n")
+                    time.sleep(wait_time)
+                else:
+                    print(f"\n❌ {max_retries}回の試行後も失敗しました")
+                    raise
+    
+    def _translate_with_stream(self, content: str, is_incremental: bool = False) -> Tuple[str, Dict]:
+        """ストリーミングAPIで翻訳（内部メソッド）"""
         if is_incremental:
             user_message = f"""以下はClaude Codeチェンジログの最新更新部分です。
 これを既存の翻訳に追加できる形で日本語に翻訳してください。
@@ -191,7 +236,8 @@ class ChangelogTranslator:
             messages=[{
                 "role": "user",
                 "content": user_message
-            }]
+            }],
+            timeout=600.0  # 10分のタイムアウト
         ) as stream:
             for text in stream.text_stream:
                 translated_text += text
@@ -227,14 +273,15 @@ class ChangelogTranslator:
         
         return translated_text, usage
     
-    def save_translation(self, content: str, is_full: bool = True):
+    def save_translation(self, content: str):
         """翻訳結果を保存"""
         os.makedirs(os.path.dirname(self.output_file), exist_ok=True)
         
         header = f"""# Claude Code チェンジログ（日本語訳）
 
 > 最終更新: {datetime.now().strftime('%Y年%m月%d日 %H:%M')}  
-> 原文: {self.changelog_url}
+> 原文: {self.changelog_url}  
+> 表示: 最新{self.max_versions_to_translate}バージョン
 
 ---
 
@@ -252,7 +299,6 @@ class ChangelogTranslator:
                 existing = f.read()
             
             header_end = existing.find('---\n\n') + 5
-            header = existing[:header_end]
             old_translation = existing[header_end:]
             
             updated_translation = new_content + "\n\n" + old_translation
@@ -260,7 +306,8 @@ class ChangelogTranslator:
             updated_header = f"""# Claude Code チェンジログ（日本語訳）
 
 > 最終更新: {datetime.now().strftime('%Y年%m月%d日 %H:%M')}  
-> 原文: {self.changelog_url}
+> 原文: {self.changelog_url}  
+> 表示: 最新{self.max_versions_to_translate}バージョン
 
 ---
 
@@ -341,6 +388,11 @@ class ChangelogTranslator:
             
             file_size_kb = len(current_content.encode('utf-8')) / 1024
             print(f"📄 ファイルサイズ: {file_size_kb:.1f}KB")
+            
+            # 最新50バージョンのみを抽出
+            limited_content = self.extract_recent_versions(current_content)
+            limited_size_kb = len(limited_content.encode('utf-8')) / 1024
+            print(f"   翻訳対象: {limited_size_kb:.1f}KB（最新{self.max_versions_to_translate}バージョン）")
             print()
             
             last_hash = self.get_last_hash()
@@ -365,12 +417,12 @@ class ChangelogTranslator:
                     self.append_translation(translated_new)
                 else:
                     print("⚠️  差分抽出失敗 - 全文翻訳にフォールバック")
-                    translated, usage = self.translate_changelog(current_content)
+                    translated, usage = self.translate_changelog(limited_content)
                     self.save_translation(translated)
             else:
                 reason = "初回" if not old_content else "定期メンテナンス"
                 print(f"📝 全文翻訳モード（{reason}）")
-                translated, usage = self.translate_changelog(current_content)
+                translated, usage = self.translate_changelog(limited_content)
                 self.save_translation(translated)
             
             self.save_previous_content(current_content)
@@ -389,14 +441,8 @@ class ChangelogTranslator:
             print("✅ 処理が正常に完了しました")
             print("=" * 70)
             
-        except requests.exceptions.RequestException as e:
-            error_message = f"ネットワークエラー: {str(e)}"
-            print(f"❌ {error_message}")
-            self.send_notification(f"⚠️ エラーが発生しました\n{error_message}")
-            raise
-            
         except Exception as e:
-            error_message = f"予期しないエラー: {str(e)}"
+            error_message = f"エラー: {str(e)}"
             print(f"❌ {error_message}")
             self.send_notification(f"⚠️ エラーが発生しました\n{error_message}")
             raise

@@ -2,7 +2,7 @@ name: Sync Claude Code Changelog
 
 on:
   schedule:
-    - cron: '17 * * * *'  # 1時間ごとに実行（毎時28分に実行）
+    - cron: '0 * * * *'  # 1時間ごとに実行（毎時28分に実行）
   workflow_dispatch:  # 手動実行も可能
 
 permissions:

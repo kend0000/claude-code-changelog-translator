@@ -28,8 +28,8 @@ class ChangelogTranslator:
         self.translation_count_file = "translation_count.txt"
         
         # 設定
-        self.full_translation_interval = 10
-        self.max_versions_to_translate = 50  # 最新50バージョンのみ翻訳
+        self.full_translation_interval = 15
+        self.max_versions_to_translate = 20  # 最新50バージョンのみ翻訳
         
         # 翻訳エージェントのシステムプロンプト
         self.translation_system_prompt = """あなたはプロフェッショナルな英日翻訳者です。以下の原則に従って翻訳を行ってください。

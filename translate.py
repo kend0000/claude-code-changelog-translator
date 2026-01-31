@@ -28,7 +28,7 @@ class ChangelogTranslator:
         self.translation_count_file = "translation_count.txt"
         
         # 設定
-        self.full_translation_interval = 15
+        self.full_translation_interval = 20
         self.max_versions_to_translate = 20  # 最新50バージョンのみ翻訳
         
         # 翻訳エージェントのシステムプロンプト
